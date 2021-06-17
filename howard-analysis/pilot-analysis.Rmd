@@ -1,0 +1,99 @@
+---
+title: "Pilot Analysis"
+author: "Howard Baek"
+date: "6/17/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(factoextra)
+library(raster)
+library(tmap)
+library(png)
+library(gridExtra)
+library(dendextend)
+library(DescTools)
+theme_set(theme_light())
+
+source(file.path(here::here(), "R", "imgVectortoRaster.R"))
+source(file.path(here::here(), "R", "dendIMG.R"))
+source(file.path(here::here(), "R", "myheatmap.R"))
+source(file.path(here::here(), "R", "desat.R"))
+source(file.path(here::here(), "R", "kheatmap.R"))
+source(file.path(here::here(), "R", "addIMGtopanel.R"))
+source(file.path(here::here(), "R", "yearTable.R"))
+source("../processCSV-tidyverse.R")
+# Code to download data from ERDDAP servers is in data folder
+```
+
+
+## Re-run Eli talk analyses 
+
+Latitude (42.625, 52.125) and Longitude (229.875, 236.625)
+
+```{r}
+# I downloaded the data using read_csv()
+# https://coastwatch.pfeg.noaa.gov/erddap/griddap/ncdcOisst21Agg.htmlTable?sst%5B(2010-01-01T12:00:00Z):(2021-06-01T12:00:00Z)%5D%5B(0.0)%5D%5B(42.625):(52.125)%5D%5B(229.875):(236.625)%5D&.draw=surface&.vars=longitude%7Clatitude%7Csst&.colorBar=%7C%7C%7C12%7C19%7C&.bgColor=0xffccccff
+# Saved it as a CSV
+
+# Raw data (last 10 years)
+df_raw <- read_csv("pilot_data.csv")
+
+# Processed data
+df_processed <- df_raw %>% 
+  # Get rid of miscellaneous zlev in first row
+  slice(-1) %>% 
+  # zlev is a column of zeroes, so get rid of that
+  dplyr::select(-zlev) %>% 
+  # Convert into date
+  mutate(time = ymd_hms(time),
+         # Extract out day so I can just filter for first day in each month
+         day = day(time)) %>% 
+  # filter for first day in each month
+  filter(day == 1) %>% 
+  dplyr::select(-day) %>% 
+  # Set column names
+  rename(date = time,
+         lat = latitude,
+         lon = longitude) %>% 
+  # Convert date column to Date type
+  mutate(date = as.Date(date),
+         lat = as.numeric(lat),
+         lon = as.numeric(lon),
+         sst = as.numeric(sst))
+ 
+```
+
+```{r}
+# Check if same n for each date
+n.by.date <- tapply(df_processed$sst, df_processed$date, function(x){sum(is.na(x))})
+if(any((n.by.date-n.by.date[1])!=0)) {
+  stop("There's a problem. Should be same n for each date.")
+} 
+
+# Pivot Wider
+df_wide <- df_processed %>% 
+  pivot_wider(names_from = date, values_from = sst)
+
+# which row are non-NA?
+pos_loc <- which(!is.na(df_wide[,3]))
+
+df_clean <- df_wide %>% 
+  # remove the rows that are NA
+  na.omit() 
+```
+
+```{r}
+# X_norm <- t(scale(t(df_clean), scale=FALSE)
+colnames(X_norm) <- colnames(X) <- paste0("p", 1:ncol(X_norm))
+```
+
+
+
