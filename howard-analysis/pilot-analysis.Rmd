@@ -39,9 +39,7 @@ source("../processCSV-tidyverse.R")
 Latitude (42.625, 52.125) and Longitude (229.875, 236.625)
 
 ```{r}
-# I downloaded the data using read_csv()
-# https://coastwatch.pfeg.noaa.gov/erddap/griddap/ncdcOisst21Agg.htmlTable?sst%5B(2010-01-01T12:00:00Z):(2021-06-01T12:00:00Z)%5D%5B(0.0)%5D%5B(42.625):(52.125)%5D%5B(229.875):(236.625)%5D&.draw=surface&.vars=longitude%7Clatitude%7Csst&.colorBar=%7C%7C%7C12%7C19%7C&.bgColor=0xffccccff
-# Saved it as a CSV
+# I downloaded the data using read_csv("https://coastwatch.pfeg.noaa.gov/erddap/griddap/ncdcOisst21Agg.csv?sst%5B(2010-01-01T12:00:00Z):(2021-06-01T12:00:00Z)%5D%5B(0.0)%5D%5B(42.625):(52.125)%5D%5B(229.875):(236.625)%5D&.draw=surface&.vars=longitude%7Clatitude%7Csst&.colorBar=%7C%7C%7C12%7C19%7C&.bgColor=0xffccccff")
 
 # Raw data (last 10 years)
 df_raw <- read_csv("pilot_data.csv")
@@ -85,15 +83,66 @@ df_wide <- df_processed %>%
 # which row are non-NA?
 pos_loc <- which(!is.na(df_wide[,3]))
 
+# Omit data and take transpose
 df_clean <- df_wide %>% 
   # remove the rows that are NA
-  na.omit() 
+  na.omit()
+
+# Take transpose of df_wide and df_clean to mimic output of processCSV-tidyverse.R
+df_wide <- t(df_wide)
+df_clean <- t(df_clean)
+
+datalist <- list(dat = dat_wide, dat_clean = dat_clean, pos_loc = pos_loc)
 ```
 
 ```{r}
-# X_norm <- t(scale(t(df_clean), scale=FALSE)
-colnames(X_norm) <- colnames(X) <- paste0("p", 1:ncol(X_norm))
+# Take out rows with lat, lon
+image <- df_clean[c(-1,-2),]
+# image_df %>% View()
+
+# Create image_df_norm (X_norm in QuanSeminar.Rmd)
+image_norm <- t(scale(t(image), scale=FALSE))
+colnames(image_norm) <- colnames(X) <- paste0("p", 1:ncol(image_norm))
+# image_norm is a 138 by 805 matrix
 ```
 
 
+```{r}
+round(image_norm[1:5, 1:10], digits=2)
+```
 
+```{r}
+prcomp_pca <- prcomp(image_norm, scale = FALSE, center=FALSE)
+prcomp_pca$rotation[,1] <- -1 * prcomp_pca$rotation[,1]
+prcomp_pca$x[,1] <- -1 * prcomp_pca$x[,1]
+# Store for use later
+eigenimages <- t(prcomp_pca$rotation)
+alpha <- prcomp_pca$x
+```
+
+
+```{r}
+df <- data.frame(alpha,
+                date = as.Date(rownames(image_norm)),
+                year=as.integer(format(as.Date(rownames(image_norm)), "%Y")),
+                mon=factor(format(as.Date(rownames(image_norm)), "%b"), levels = month.abb)
+                )
+df2 <- df %>% 
+  pivot_longer(starts_with("PC"), names_to="PC", values_to="value")
+
+df2 %>% count(PC)
+```
+
+```{r}
+eigenimages <- t(prcomp_pca$rotation)
+round(eigenimages[1:5, 1:10], digits=2)
+```
+
+```{r}
+img_list <- imgVectortoRaster(eigenimages, datalist)$list
+```
+
+Error Message: 
+
+> Error in centroid_images[, datalist$pos.loc] <- centers : 
+  number of items to replace is not a multiple of replacement length
