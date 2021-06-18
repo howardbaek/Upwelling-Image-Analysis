@@ -197,7 +197,7 @@ img_list <- imgVectortoRaster(eigenimages, datalist)$list
 ```
 
 Something is wrong. I get NA values inside img_list (values)
-
+UPDATE: I fixed pos.loc to pos_loc inside imgVectortoRaster.R
 
 ```{r}
 # First 6 eigenimages
@@ -214,4 +214,4 @@ tm_shape(p_stack) +
   tm_layout(main.title = "Eigen Images", title.size = 1)
 ```
 
-I only see gray values here.
+Image looks wrong.
