@@ -40,6 +40,7 @@ Latitude (42.625, 52.125) and Longitude (229.875, 236.625)
 
 ```{r}
 # I downloaded the data using read_csv("https://coastwatch.pfeg.noaa.gov/erddap/griddap/ncdcOisst21Agg.csv?sst%5B(2010-01-01T12:00:00Z):(2021-06-01T12:00:00Z)%5D%5B(0.0)%5D%5B(42.625):(52.125)%5D%5B(229.875):(236.625)%5D&.draw=surface&.vars=longitude%7Clatitude%7Csst&.colorBar=%7C%7C%7C12%7C19%7C&.bgColor=0xffccccff")
+# This big data is saved as pilot_data.csv
 
 # Raw data (last 10 years)
 df_raw <- read_csv("pilot_data.csv")
@@ -66,7 +67,6 @@ df_processed <- df_raw %>%
          lat = as.numeric(lat),
          lon = as.numeric(lon),
          sst = as.numeric(sst))
- 
 ```
 
 ```{r}
@@ -89,32 +89,41 @@ df_clean <- df_wide %>%
   na.omit()
 
 # Take transpose of df_wide and df_clean to mimic output of processCSV-tidyverse.R
-df_wide <- t(df_wide)
-df_clean <- t(df_clean)
+df_wide_t <- t(df_wide)
+df_clean_t <- t(df_clean)
 
-datalist <- list(dat = dat_wide, dat_clean = dat_clean, pos_loc = pos_loc)
+datalist <- list(dat = df_wide_t, dat_clean = df_clean_t, pos_loc = pos_loc)
 ```
+
 
 ```{r}
 # Take out rows with lat, lon
-image <- df_clean[c(-1,-2),]
-# image_df %>% View()
+image <- df_clean_t[c(-1,-2),]
+# image %>% View()
 
-# Create image_df_norm (X_norm in QuanSeminar.Rmd)
+# Create image_norm (X_norm in QuanSeminar.Rmd)
 image_norm <- t(scale(t(image), scale=FALSE))
-colnames(image_norm) <- colnames(X) <- paste0("p", 1:ncol(image_norm))
-# image_norm is a 138 by 805 matrix
+colnames(image_norm) <- paste0("p", 1:ncol(image_norm))
+
+image_norm %>% View()
 ```
 
+
+### image_norm is a 138 by 805 matrix (Context: 138 images on 138 different dates (first day of each month from the past 10 years) with 805 pixels)
 
 ```{r}
 round(image_norm[1:5, 1:10], digits=2)
 ```
 
 ```{r}
+# Apply PCA
 prcomp_pca <- prcomp(image_norm, scale = FALSE, center=FALSE)
+
+# Do this so the first image looks like upwelling
+# each column in prcomp_pca$rotation is an "eigenimage"
 prcomp_pca$rotation[,1] <- -1 * prcomp_pca$rotation[,1]
 prcomp_pca$x[,1] <- -1 * prcomp_pca$x[,1]
+
 # Store for use later
 eigenimages <- t(prcomp_pca$rotation)
 alpha <- prcomp_pca$x
@@ -129,20 +138,30 @@ df <- data.frame(alpha,
                 )
 df2 <- df %>% 
   pivot_longer(starts_with("PC"), names_to="PC", values_to="value")
-
-df2 %>% count(PC)
 ```
 
 ```{r}
-eigenimages <- t(prcomp_pca$rotation)
 round(eigenimages[1:5, 1:10], digits=2)
 ```
+
 
 ```{r}
 img_list <- imgVectortoRaster(eigenimages, datalist)$list
 ```
 
-Error Message: 
 
-> Error in centroid_images[, datalist$pos.loc] <- centers : 
-  number of items to replace is not a multiple of replacement length
+```{r}
+# First 6 eigenimages
+p_stack <- raster::stack(img_list[[1]], img_list[[2]], img_list[[3]], 
+                 img_list[[4]], img_list[[5]], img_list[[6]])
+
+pal <- colorRamps::matlab.like(100)
+
+tm_shape(p_stack) + 
+  tm_raster(style= "cont", title="SST Anomaly", 
+            palette=pal, midpoint=NA, 
+            colorNA = "grey", textNA = "Land") +
+  tm_layout(panel.labels = paste("PC", 1:length(p_stack))) +
+  tm_layout(main.title = "Eigen Images", title.size = 1)
+```
+
