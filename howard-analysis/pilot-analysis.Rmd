@@ -11,6 +11,7 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Libraries and Source
 ```{r}
 library(tidyverse)
 library(lubridate)
@@ -31,21 +32,21 @@ source(file.path(here::here(), "R", "desat.R"))
 source(file.path(here::here(), "R", "kheatmap.R"))
 source(file.path(here::here(), "R", "addIMGtopanel.R"))
 source(file.path(here::here(), "R", "yearTable.R"))
-source("../processCSV-tidyverse.R")
 # Code to download data from ERDDAP servers is in data folder
 ```
 
 
-## Re-run Eli talk analyses 
+# Re-run Eli talk analyses 
 
 Latitude (42.625, 52.125) and Longitude (229.875, 236.625)
 
+## Data Preprocessing
 ```{r}
 # I downloaded the data using read_csv("https://coastwatch.pfeg.noaa.gov/erddap/griddap/ncdcOisst21Agg.csv?sst%5B(2010-01-01T12:00:00Z):(2021-06-01T12:00:00Z)%5D%5B(0.0)%5D%5B(42.625):(52.125)%5D%5B(229.875):(236.625)%5D&.draw=surface&.vars=longitude%7Clatitude%7Csst&.colorBar=%7C%7C%7C12%7C19%7C&.bgColor=0xffccccff")
 # This big data is saved as pilot_data.csv
 
 # Raw data (last 10 years)
-df_raw <- read_csv("pilot_data.csv")
+df_raw <- read_csv("howard-analysis/pilot_data.csv")
 
 # Processed data
 df_processed <- df_raw %>% 
@@ -111,17 +112,20 @@ colnames(image_norm) <- paste0("p", 1:ncol(image_norm))
 ```
 
 
-### image_norm is a 138 by 805 matrix (Context: 138 images on 138 different dates (first day of each month from the past 10 years) with 805 pixels)
+Note: image_norm is a 138 by 805 matrix (Context: 138 images on 138 different dates, first day of each month from the past 10 years, with 805 pixels)
 
 ```{r}
 round(image_norm[1:5, 1:10], digits=2)
 ```
 
+
+## PCA
+
 ```{r}
 # Apply PCA
 prcomp_pca <- prcomp(image_norm, scale = FALSE, center=FALSE)
 
-# Do this so the first image looks like upwelling
+# Do this so the first eigenimage looks like upwelling
 # each column in prcomp_pca$rotation is an "eigenimage"
 prcomp_pca$rotation[,1] <- -1 * prcomp_pca$rotation[,1]
 prcomp_pca$x[,1] <- -1 * prcomp_pca$x[,1]
@@ -130,6 +134,8 @@ prcomp_pca$x[,1] <- -1 * prcomp_pca$x[,1]
 eigenimages <- t(prcomp_pca$rotation)
 alpha <- prcomp_pca$x
 ```
+
+`eigenimages` is a 138 by 805 matrix, where where are 138 PCs (eigenimages) and 805 pixels (p1, p2, p3, ..., p805)
 
 
 ```{r}
@@ -149,7 +155,7 @@ df2 <- df %>%
 
 
 
-
+### PC1 and PC2
 ```{r}
 # Visualize PCs
 # Recreate Eli's graph: SST Anomaly pattern in the PC1-PC2 space
@@ -163,7 +169,7 @@ df %>%
           subtitle = "April&May&June and Feb&March and July&August and Sept&Oct") 
 ```
 
-Facet by month
+### PCA: Facet by month
 ```{r}
 df %>% 
   ggplot(aes(PC1, PC2, label = year)) +
@@ -173,11 +179,11 @@ df %>%
   annotate("segment", x = -5, xend = 55, y = 0, yend = 0, colour = "midnightblue", linetype=2) +
   annotate("segment", x = 0, xend = 0, y = -25, yend = 25, colour = "midnightblue", linetype=2) +
   ggtitle("PCA decomposition into PC1 and PC2 by Month",
-          subtitle = "Shows seasonal cycle") 
+          subtitle = "Shows seasonal cycle: Parabolic Movement from Jan to Dec") 
 ```
 
 
-Facet by Year
+### PCA: Facet by Year
 ```{r}
 df %>%
   ggplot(aes(PC1, PC2, label = mon, vjust = 1, hjust = 1)) +
@@ -191,14 +197,63 @@ df %>%
 ```
 
 
-Vector to Raster
+### Vector to Raster (img_list)
 ```{r}
-img_list <- imgVectortoRaster(eigenimages, datalist)$list
+# imgVectortoRaster function
+n_K <- nrow(eigenimages)
+
+# Get out dirty data
+Data_dirty <- datalist$dat
+# Latitude of dirty data
+lats <- Data_dirty[1,]
+# Longitude of dirty data
+lons <- Data_dirty[2,]
+# Aspect of dirty data
+asp <- c(table(lons)[1], table(lats)[1]) # lon (x) - lats (y)
+# bbox is a bounding box (minx, maxx, miny, maxy)
+bb_box <- c(min(lons), max(lons), min(lats), max(lats))
+# 229.875 236.625  42.625  52.125 
+# matches the box set on ERDDAP link
+
+# Populate non-NA columns (indicated by pos.loc) of centroid_images with centers
+centroid_images <- matrix(NA, n_K, ncol(Data_dirty))
+centroid_images[, datalist$pos_loc] <- eigenimages
+rownames(centroid_images) <- paste("Centroid", 1:n_K)
+
+# Empty list 
+img_list <- list()
+# Assign img_mat
+img_mat <- centroid_images
+
+# For each centroid (row in img_mat)
+for(i in 1:nrow(img_mat)){
+  
+  tmp <- matrix(img_mat[i,], asp[2], asp[1], byrow=TRUE)
+  tmp <- tmp[asp[2]:1, ] # inverse order of rows
+  # Convert tmp to raster
+  tmp <- raster::raster(tmp)
+  # Set extent of raster
+  # The spatial extent is the allowable range for x and y coordinates 
+  # When you create a feature class or feature dataset, the spatial extent is defined using 
+  # minimum and maximum x and y coordinate values.
+  raster::extent(tmp) <- bb_box
+  # crs is a coordinate reference system
+  raster::crs(tmp) <- "+proj=longlat +datum=WGS84"
+  img_list[[i]] <- tmp
+}
+
+# Create a RasterStack object
+img_stack <- raster::stack(img_list)
+names(img_stack) <- paste("Centroid", 1:n_K)
+# crs is a coordinate reference system
+raster::crs(img_stack) <- "+proj=longlat +datum=WGS84"
 ```
 
 Something is wrong. I get NA values inside img_list (values)
 UPDATE: I fixed pos.loc to pos_loc inside imgVectortoRaster.R
 
+
+### PCA: 6 Eigen Images
 ```{r}
 # First 6 eigenimages
 p_stack <- raster::stack(img_list[[1]], img_list[[2]], img_list[[3]], 
@@ -206,7 +261,9 @@ p_stack <- raster::stack(img_list[[1]], img_list[[2]], img_list[[3]],
 
 pal <- colorRamps::matlab.like(100)
 
-tm_shape(p_stack) + 
+# crs(p_stack) <- "+proj=longlat +datum=WGS84"
+
+tm_shape(p_stack) +  
   tm_raster(style= "cont", title="SST Anomaly", 
             palette=pal, midpoint=NA, 
             colorNA = "grey", textNA = "Land") +
@@ -215,3 +272,44 @@ tm_shape(p_stack) +
 ```
 
 Image looks wrong.
+
+
+
+
+
+## K-Means Clustering
+```{r}
+set.seed(123)
+n_K <- 12
+out_norm <- kmeans(image_norm, n_K, iter.max=25, nstart=100)
+```
+
+
+```{r}
+centroidimages_norm <- out_norm$centers
+rownames(centroidimages_norm) <- paste("Centroid", 1:n_K)
+round(centroidimages_norm[1:5, 1:5], digits=2)
+```
+
+```{r}
+img_norm <- imgVectortoRaster(centroidimages_norm, datalist)
+img_norm_stack <- img_norm$stack
+img_norm_list <- img_norm$list
+```
+
+### Centroid Images
+```{r}
+tm_shape(img_norm_stack) + 
+  tm_raster(style= "cont", title="SST Anomaly", 
+            palette=pal, midpoint=NA, 
+            colorNA = "grey", textNA = "Land") +
+  tm_layout(panel.labels = paste("Centroid", 1:length(p_stack))) +
+  tm_layout(main.title = "Centroid Images", title.size = 1)
+```
+
+
+### Distances between Images
+```{r}
+p12 <- kheatmap(12, image_norm, datalist, main.n=5, plotit=FALSE, dend.type="original")
+```
+
