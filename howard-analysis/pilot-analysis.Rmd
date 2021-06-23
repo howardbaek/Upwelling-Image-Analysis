@@ -11,7 +11,7 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Libraries and Source
+## Libraries and Helper Files
 ```{r}
 library(tidyverse)
 library(lubridate)
@@ -23,20 +23,25 @@ library(png)
 library(gridExtra)
 library(dendextend)
 library(DescTools)
+library(imageryML)
+library(plotly)
+library(cluster)    # clustering algorithms
+library(factoextra) # clustering algorithms & visualization
 theme_set(theme_light())
 
-source(file.path(here::here(), "R", "imgVectortoRaster.R"))
-source(file.path(here::here(), "R", "dendIMG.R"))
-source(file.path(here::here(), "R", "myheatmap.R"))
-source(file.path(here::here(), "R", "desat.R"))
-source(file.path(here::here(), "R", "kheatmap.R"))
-source(file.path(here::here(), "R", "addIMGtopanel.R"))
-source(file.path(here::here(), "R", "yearTable.R"))
+# Note: Don't need to source these anymore since we have the imageryML package
+# source(file.path(here::here(), "R", "imgVectortoRaster.R"))
+# source(file.path(here::here(), "R", "dendIMG.R"))
+# source(file.path(here::here(), "R", "myheatmap.R"))
+# source(file.path(here::here(), "R", "desat.R"))
+# source(file.path(here::here(), "R", "kheatmap.R"))
+# source(file.path(here::here(), "R", "addIMGtopanel.R"))
+# source(file.path(here::here(), "R", "yearTable.R"))
 # Code to download data from ERDDAP servers is in data folder
 ```
 
 
-# Re-run Eli talk analyses 
+## Re-run Eli talk analyses 
 
 Latitude (42.625, 52.125) and Longitude (229.875, 236.625)
 
@@ -70,6 +75,25 @@ df_processed <- df_raw %>%
          lat = as.numeric(lat),
          lon = as.numeric(lon),
          sst = as.numeric(sst))
+
+# mask out Puget Sound, Strait of Juan de Fuca and Georgia Strait
+masks <- list(c(235.4488, 236.884, 47.87651, 50.13138),
+              c(232.2913, 233.8987, 50.28689, 51.60871),
+              c(234.4154, 235.9654, 49.04283, 50.09251))
+
+for(m1 in masks) {
+  # index of Puget Sound, Strait of Juan de Fuca or Georgia Strait
+  mask_loc <- df_processed$lat <= m1[4] & df_processed$lat >= m1[3] &
+    df_processed$lon <= m1[2] & df_processed$lon >= m1[1]
+  # Change to NA
+  df_processed$sst[mask_loc] <- NA
+}
+
+
+# Use this code to figure out the lat/lon extents
+# a <- imgVectortoRaster(datalist$dat.clean[3:5,], datalist)
+# raster::plot(a$stack)
+# drawExtent() # click in upper/lower corners
 ```
 
 ```{r}
@@ -84,24 +108,24 @@ df_wide <- df_processed %>%
   pivot_wider(names_from = date, values_from = sst)
 
 # which row are non-NA?
-pos_loc <- which(!is.na(df_wide[,3]))
+pos.loc <- which(!is.na(df_wide[,3]))
 
 # Omit data and take transpose
-df_clean <- df_wide %>% 
+df.clean <- df_wide %>% 
   # remove the rows that are NA
   na.omit()
 
-# Take transpose of df_wide and df_clean to mimic output of processCSV-tidyverse.R
+# Take transpose of df_wide and df.clean to mimic output of processCSV-tidyverse.R
 df_wide_t <- t(df_wide)
-df_clean_t <- t(df_clean)
+df.clean.t <- t(df.clean)
 
-datalist <- list(dat = df_wide_t, dat_clean = df_clean_t, pos_loc = pos_loc)
+datalist <- list(dat = df_wide_t, dat.clean = df.clean.t, pos.loc = pos.loc)
 ```
 
 
 ```{r}
 # Take out rows with lat, lon
-image <- df_clean_t[c(-1,-2),]
+image <- df.clean.t[c(-1,-2),]
 # image %>% View()
 
 # Create image_norm (X_norm in QuanSeminar.Rmd)
@@ -119,7 +143,7 @@ round(image_norm[1:5, 1:10], digits=2)
 ```
 
 
-## PCA
+## Principal Component Analysis
 
 ```{r}
 # Apply PCA
@@ -131,11 +155,15 @@ prcomp_pca$rotation[,1] <- -1 * prcomp_pca$rotation[,1]
 prcomp_pca$x[,1] <- -1 * prcomp_pca$x[,1]
 
 # Store for use later
+# eigenimages is the transpose of the rotation matrix, which provides 
+# the principal component loadings: each column of the rotation matrix
+# provides the corresponding principal component loading vector (ISL pg 402)
 eigenimages <- t(prcomp_pca$rotation)
+# alpha's kth column is the kth principal component score vector (z)
 alpha <- prcomp_pca$x
 ```
 
-`eigenimages` is a 138 by 805 matrix, where where are 138 PCs (eigenimages) and 805 pixels (p1, p2, p3, ..., p805)
+`eigenimages` is a 138 by 805 matrix, where where are 138 PCs (eigenimages) and 776 pixels (p1, p2, p3, ..., p776)
 
 
 ```{r}
@@ -155,7 +183,7 @@ df2 <- df %>%
 
 
 
-### PC1 and PC2
+### PC1 and PC2 Scores
 ```{r}
 # Visualize PCs
 # Recreate Eli's graph: SST Anomaly pattern in the PC1-PC2 space
@@ -170,6 +198,8 @@ df %>%
 ```
 
 ### PCA: Facet by month
+
+#### Static
 ```{r}
 df %>% 
   ggplot(aes(PC1, PC2, label = year)) +
@@ -178,12 +208,33 @@ df %>%
   facet_wrap(~mon) +
   annotate("segment", x = -5, xend = 55, y = 0, yend = 0, colour = "midnightblue", linetype=2) +
   annotate("segment", x = 0, xend = 0, y = -25, yend = 25, colour = "midnightblue", linetype=2) +
-  ggtitle("PCA decomposition into PC1 and PC2 by Month",
+  ggtitle("PCA decomposition into PC1 Score and PC2 Score by Month",
           subtitle = "Shows seasonal cycle: Parabolic Movement from Jan to Dec") 
 ```
 
 
+#### Interactive
+```{r}
+pca_by_month_plot <- df %>% 
+  ggplot(aes(PC1, PC2, label = year)) +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~mon) +
+  annotate("segment", x = -5, xend = 55, y = 0, yend = 0, colour = "midnightblue", linetype=2) +
+  annotate("segment", x = 0, xend = 0, y = -25, yend = 25, colour = "midnightblue", linetype=2) +
+  ggtitle("PCA decomposition into PC1 Score and PC2 Score by Month",
+          subtitle = "Shows seasonal cycle: Parabolic Movement from Jan to Dec") 
+
+ggplotly(pca_by_month_plot)
+```
+
+
+Jul: 2015, 2016 seems like outlier
+Sept: 2017, 2020 seems like an outlier
+
+
 ### PCA: Facet by Year
+
+##### Static
 ```{r}
 df %>%
   ggplot(aes(PC1, PC2, label = mon, vjust = 1, hjust = 1)) +
@@ -192,78 +243,51 @@ df %>%
   facet_wrap(~year) +
   annotate("segment", x = -5, xend = 55, y = 0, yend = 0, colour = "midnightblue", linetype=2) +
   annotate("segment", x = 0, xend = 0, y = -25, yend = 25, colour = "midnightblue", linetype=2) +
-   ggtitle("PCA decomposition into PC1 and PC2 by Year",
+   ggtitle("PCA decomposition into PC1 Score and PC2 Score by Year",
           subtitle = "Shows seasonal cycle, missing summer months for 2021") 
 ```
 
 
-### Vector to Raster (img_list)
+#### Interactive
 ```{r}
-# imgVectortoRaster function
-n_K <- nrow(eigenimages)
+pca_by_year_plot <- df %>%
+  ggplot(aes(PC1, PC2, label = mon)) +
+  geom_point(alpha = 0.8) +
+  facet_wrap(~year) +
+  annotate("segment", x = -5, xend = 55, y = 0, yend = 0, colour = "midnightblue", linetype=2) +
+  annotate("segment", x = 0, xend = 0, y = -25, yend = 25, colour = "midnightblue", linetype=2) +
+   ggtitle("PCA decomposition into PC1 Score and PC2 Score by Year",
+          subtitle = "Shows seasonal cycle, missing summer months for 2021") 
 
-# Get out dirty data
-Data_dirty <- datalist$dat
-# Latitude of dirty data
-lats <- Data_dirty[1,]
-# Longitude of dirty data
-lons <- Data_dirty[2,]
-# Aspect of dirty data
-asp <- c(table(lons)[1], table(lats)[1]) # lon (x) - lats (y)
-# bbox is a bounding box (minx, maxx, miny, maxy)
-bb_box <- c(min(lons), max(lons), min(lats), max(lats))
-# 229.875 236.625  42.625  52.125 
-# matches the box set on ERDDAP link
-
-# Populate non-NA columns (indicated by pos.loc) of centroid_images with centers
-centroid_images <- matrix(NA, n_K, ncol(Data_dirty))
-centroid_images[, datalist$pos_loc] <- eigenimages
-rownames(centroid_images) <- paste("Centroid", 1:n_K)
-
-# Empty list 
-img_list <- list()
-# Assign img_mat
-img_mat <- centroid_images
-
-# For each centroid (row in img_mat)
-for(i in 1:nrow(img_mat)){
-  
-  tmp <- matrix(img_mat[i,], asp[2], asp[1], byrow=TRUE)
-  tmp <- tmp[asp[2]:1, ] # inverse order of rows
-  # Convert tmp to raster
-  tmp <- raster::raster(tmp)
-  # Set extent of raster
-  # The spatial extent is the allowable range for x and y coordinates 
-  # When you create a feature class or feature dataset, the spatial extent is defined using 
-  # minimum and maximum x and y coordinate values.
-  raster::extent(tmp) <- bb_box
-  # crs is a coordinate reference system
-  raster::crs(tmp) <- "+proj=longlat +datum=WGS84"
-  img_list[[i]] <- tmp
-}
-
-# Create a RasterStack object
-img_stack <- raster::stack(img_list)
-names(img_stack) <- paste("Centroid", 1:n_K)
-# crs is a coordinate reference system
-raster::crs(img_stack) <- "+proj=longlat +datum=WGS84"
+ggplotly(pca_by_year_plot)
 ```
 
-Something is wrong. I get NA values inside img_list (values)
-UPDATE: I fixed pos.loc to pos_loc inside imgVectortoRaster.R
+
+2020: September an outlier
+
+
+
+
+
+### Vector to Raster (img.list)
+```{r}
+# TODO: proj.name=NULL from imageryML R package
+img.list <- imgVectortoRaster(eigenimages, datalist)$list
+```
+
+
 
 
 ### PCA: 6 Eigen Images
 ```{r}
 # First 6 eigenimages
-p_stack <- raster::stack(img_list[[1]], img_list[[2]], img_list[[3]], 
-                 img_list[[4]], img_list[[5]], img_list[[6]])
-
+p_stack <- raster::stack(img.list[[1]], img.list[[2]], img.list[[3]], 
+                 img.list[[4]], img.list[[5]], img.list[[6]])
 pal <- colorRamps::matlab.like(100)
 
 # crs(p_stack) <- "+proj=longlat +datum=WGS84"
 
-tm_shape(p_stack) +  
+tm_shape(p_stack) +
   tm_raster(style= "cont", title="SST Anomaly", 
             palette=pal, midpoint=NA, 
             colorNA = "grey", textNA = "Land") +
@@ -271,31 +295,87 @@ tm_shape(p_stack) +
   tm_layout(main.title = "Eigen Images", title.size = 1)
 ```
 
-Image looks wrong.
+
+```{r}
+# First PC
+ncomp1 <- 1
+# alpha[,1:ncomp1, drop=FALSE] means select the first ncomp1 column (Principal Component)
+RE1 <- alpha[,1:ncomp1, drop=FALSE] %*% eigenimages[1:ncomp1, drop=FALSE]
+
+# First 2 PCs
+ncomp2 <- 2
+RE2 <- alpha[,1:ncomp2] %*% eigenimages[1:ncomp2,]
+
+# First 10 PCs
+ncomp3 <- 10
+RE3 <- alpha[,1:ncomp3] %*% eigenimages[1:ncomp3,]
+```
 
 
+### Reconstruction of Images with PCA 
+
+2015-10-01
+```{r}
+# Index for date 2015-10-01
+i <- which(rownames(image_norm) =="2015-10-01")
+
+img1 <- imgVectortoRaster(rbind(image_norm[i,], RE1[i,], RE2[i,], RE3[i,]), datalist)$stack
+
+tm_shape(img1) + 
+  tm_raster(style= "cont", title="SST Anomaly", 
+            palette=pal, midpoint=NA, 
+            colorNA = "grey", textNA = "Land") +
+  tm_layout(panel.labels = c("True", paste(c(ncomp1, ncomp2, ncomp3),"PC")),
+            title=rownames(image_norm)[i])
+```
+
+
+2020-06-01
+```{r}
+# Index for date 2020-06-01
+i <- which(rownames(image_norm) =="2020-06-01")
+
+img1 <- imgVectortoRaster(rbind(image_norm[i,], RE1[i,], RE2[i,], RE3[i,]), datalist)$stack
+
+tm_shape(img1) + 
+  tm_raster(style= "cont", title="SST Anomaly", 
+            palette=pal, midpoint=NA, 
+            colorNA = "grey", textNA = "Land") +
+  tm_layout(panel.labels = c("True", paste(c(ncomp1, ncomp2, ncomp3),"PC")),
+            title=rownames(image_norm)[i])
+```
 
 
 
 ## K-Means Clustering
+
+Resource: https://uc-r.github.io/kmeans_clustering
+
 ```{r}
 set.seed(123)
-n_K <- 12
-out_norm <- kmeans(image_norm, n_K, iter.max=25, nstart=100)
-```
 
+image_norm_kmeans <- t(scale(t(image)))
+colnames(image_norm_kmeans) <- paste0("p", 1:ncol(image_norm_kmeans))
 
-```{r}
+# Number of Clusters
+n_K <- 3
+# Run K-Means
+out_norm <- kmeans(image_norm_kmeans, n_K, iter.max=25, nstart=100)
+
 centroidimages_norm <- out_norm$centers
 rownames(centroidimages_norm) <- paste("Centroid", 1:n_K)
-round(centroidimages_norm[1:5, 1:5], digits=2)
-```
 
-```{r}
+# Convert to Raster
 img_norm <- imgVectortoRaster(centroidimages_norm, datalist)
 img_norm_stack <- img_norm$stack
 img_norm_list <- img_norm$list
 ```
+
+```{r}
+# Have a look at centroids
+round(centroidimages_norm[1:3, 1:10], digits=2)
+```
+
 
 ### Centroid Images
 ```{r}
@@ -308,8 +388,105 @@ tm_shape(img_norm_stack) +
 ```
 
 
-### Distances between Images
+### Clustering Visualization
 ```{r}
-p12 <- kheatmap(12, image_norm, datalist, main.n=5, plotit=FALSE, dend.type="original")
+# fviz_cluster:
+# Provides ggplot2-based elegant visualization of partitioning methods including kmeans Observations are represented by points in the plot, using principal components if ncol(data) # is larger than 2. An ellipse is drawn around each cluster.
+fviz_cluster(out_norm, data = image_norm_kmeans, ggtheme = theme_light())
 ```
 
+
+### Distance Visualization
+```{r}
+# First 12 months (2010)
+distance_matrix <- get_dist(image_norm_kmeans[127:138, ])
+fviz_dist(distance_matrix, gradient = list(low = "#00AFBB", mid = "white", high = "#FC4E07"))
+```
+
+March-May (Spring-ish) are the most different from August-October (Late Summer - Fall-ish).
+
+
+### Determine Optimal Clusters
+
+#### Elbow Method
+```{r}
+# function to compute total within-cluster sum of square 
+wss <- function(n_K) {
+  kmeans(image_norm_kmeans, n_K, iter.max=25, nstart=100)$tot.withinss
+}
+
+# Compute and plot wss for k = 2 to k = 15
+k.values <- 2:15
+
+# extract wss for 2-15 clusters
+wss_values <- map_dbl(k.values, wss)
+
+wss_df <- tibble(k.values, wss_values)
+
+wss_df %>% 
+  ggplot(aes(k.values, wss_values)) +
+  geom_point(size = 3) +
+  geom_line() +
+  labs(x = "# of Clusters",
+       y = "Total Within-Cluster Sum of Square") +
+  ggtitle("Elbow Method: 5, 6 or 7 clusters seems to be the optimal number")
+```
+
+
+#### Silhouette Method
+```{r}
+# function to compute average silhouette for k clusters
+avg_sil <- function(n_K) {
+  km.res <- kmeans(image_norm_kmeans, n_K, iter.max=25, nstart=100)
+  ss <- silhouette(km.res$cluster, dist(image_norm_kmeans))
+  mean(ss[, 3])
+}
+
+# Compute and plot wss for k = 2 to k = 15
+k.values <- 2:15
+
+# extract avg silhouette for 2-15 clusters
+avg_sil_values <- map_dbl(k.values, avg_sil)
+
+# Create df of silhouette method
+sil_df <- tibble(k.values, avg_sil_values)
+
+sil_df %>% 
+  ggplot(aes(k.values, avg_sil_values)) +
+  geom_point(size = 3) +
+  geom_line() +
+  labs(x = "# of Clusters",
+       y = "Total Within-Cluster Sum of Square") +
+  ggtitle("Silhouette Method: 2 or 5 clusters seems to be the optimal number")
+```
+
+
+Let's roll with k = 5
+
+### Centroid Images: K = 5
+```{r}
+# Compute k-means clustering with k = 5
+set.seed(123)
+
+# Number of Clusters
+n_K <- 5
+# Run K-Means
+out_norm <- kmeans(image_norm_kmeans, n_K, iter.max=25, nstart=100)
+
+centroidimages_norm <- out_norm$centers
+rownames(centroidimages_norm) <- paste("Centroid", 1:n_K)
+
+# Convert to Raster
+img_norm <- imgVectortoRaster(centroidimages_norm, datalist)
+img_norm_stack <- img_norm$stack
+img_norm_list <- img_norm$list
+```
+
+```{r}
+tm_shape(img_norm_stack) + 
+  tm_raster(style= "cont", title="SST Anomaly", 
+            palette=pal, midpoint=NA, 
+            colorNA = "grey", textNA = "Land") +
+  tm_layout(panel.labels = paste("Centroid", 1:length(p_stack))) +
+  tm_layout(main.title = "Centroid Images", title.size = 1)
+```
