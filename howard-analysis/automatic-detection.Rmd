@@ -50,7 +50,7 @@ Longitude: 230 degree East - 360 = -130 degree West
 # This big data is saved as pilot_data.csv
 
 # Raw data (last 10 years)
-df_raw <- read_csv("howard-analysis/pilot_data.csv")
+df_raw <- read_csv("pilot_data.csv")
 
 # Processed data
 df_processed <- df_raw %>% 
