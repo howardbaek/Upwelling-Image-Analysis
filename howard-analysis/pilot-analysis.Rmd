@@ -27,6 +27,7 @@ library(imageryML)
 library(plotly)
 library(cluster)    # clustering algorithms
 library(factoextra) # clustering algorithms & visualization
+library(dendextend)
 theme_set(theme_light())
 
 # Note: Don't need to source these anymore since we have the imageryML package
@@ -45,7 +46,7 @@ theme_set(theme_light())
 
 Latitude (42.625, 52.125) and Longitude (229.875, 236.625)
 
-## Data Preprocessing
+## Data Preprocessing: Monthly
 ```{r}
 # I downloaded the data using read_csv("https://coastwatch.pfeg.noaa.gov/erddap/griddap/ncdcOisst21Agg.csv?sst%5B(2010-01-01T12:00:00Z):(2021-06-01T12:00:00Z)%5D%5B(0.0)%5D%5B(42.625):(52.125)%5D%5B(229.875):(236.625)%5D&.draw=surface&.vars=longitude%7Clatitude%7Csst&.colorBar=%7C%7C%7C12%7C19%7C&.bgColor=0xffccccff")
 # This big data is saved as pilot_data.csv
@@ -81,7 +82,7 @@ masks <- list(c(235.4488, 236.884, 47.87651, 50.13138),
               c(232.2913, 233.8987, 50.28689, 51.60871),
               c(234.4154, 235.9654, 49.04283, 50.09251))
 
-for(m1 in masks) {
+for (m1 in masks) {
   # index of Puget Sound, Strait of Juan de Fuca or Georgia Strait
   mask_loc <- df_processed$lat <= m1[4] & df_processed$lat >= m1[3] &
     df_processed$lon <= m1[2] & df_processed$lon >= m1[1]
@@ -122,6 +123,7 @@ df.clean.t <- t(df.clean)
 datalist <- list(dat = df_wide_t, dat.clean = df.clean.t, pos.loc = pos.loc)
 ```
 
+Why don't we scale the variance? Because it is precisely the variance that we are using to identify upwelling (cold nearshore and warm offshore) and identify strong versus weak upwelling. Scaling would remove the signal that we need. It would also introduce an erroneous signal to uniform temperature images (so nearshore and offshore similar in temperature). But you do want to remove the image mean because it is the nearshore/offshore differential that is the signal of upwelling not the absolute temperature.
 
 ```{r}
 # Take out rows with lat, lon
@@ -136,7 +138,7 @@ colnames(image_norm) <- paste0("p", 1:ncol(image_norm))
 ```
 
 
-Note: image_norm is a 138 by 805 matrix (Context: 138 images on 138 different dates, first day of each month from the past 10 years, with 805 pixels)
+Note: image_norm is a 138 by 776 matrix (Context: 138 images on 138 different dates, first day of each month from the past 10 years, with 776 pixels)
 
 ```{r}
 round(image_norm[1:5, 1:10], digits=2)
@@ -147,7 +149,7 @@ round(image_norm[1:5, 1:10], digits=2)
 
 ```{r}
 # Apply PCA
-prcomp_pca <- prcomp(image_norm, scale = FALSE, center=FALSE)
+prcomp_pca <- prcomp(image_norm, scale = FALSE, center = FALSE)
 
 # Do this so the first eigenimage looks like upwelling
 # each column in prcomp_pca$rotation is an "eigenimage"
@@ -163,7 +165,9 @@ eigenimages <- t(prcomp_pca$rotation)
 alpha <- prcomp_pca$x
 ```
 
-`eigenimages` is a 138 by 805 matrix, where where are 138 PCs (eigenimages) and 776 pixels (p1, p2, p3, ..., p776)
+`eigenimages` is a 138 by 776 matrix, where there are 138 PCs (eigenimages) and 776 pixels (p1, p2, p3, ..., p776)
+
+`alpha` is a 138 by 138 matrix
 
 
 ```{r}
@@ -193,6 +197,8 @@ df %>%
   geom_text(check_overlap = TRUE, vjust = 1, hjust = 1) +
   annotate("segment", x = -5, xend = 55, y = 0, yend = 0, colour = "midnightblue", linetype=2) +
   annotate("segment", x = 0, xend = 0, y = -25, yend = 25, colour = "midnightblue", linetype=2) +
+  labs(x = "PC1 Score",
+       y = "PC2 Score") +
   ggtitle("PCA clusters months together",
           subtitle = "April&May&June and Feb&March and July&August and Sept&Oct") 
 ```
@@ -208,6 +214,8 @@ df %>%
   facet_wrap(~mon) +
   annotate("segment", x = -5, xend = 55, y = 0, yend = 0, colour = "midnightblue", linetype=2) +
   annotate("segment", x = 0, xend = 0, y = -25, yend = 25, colour = "midnightblue", linetype=2) +
+  labs(x = "PC1 Score",
+       y = "PC2 Score") +
   ggtitle("PCA decomposition into PC1 Score and PC2 Score by Month",
           subtitle = "Shows seasonal cycle: Parabolic Movement from Jan to Dec") 
 ```
@@ -216,15 +224,18 @@ df %>%
 #### Interactive
 ```{r}
 pca_by_month_plot <- df %>% 
-  ggplot(aes(PC1, PC2, label = year)) +
-  geom_point(alpha = 0.7) +
+  ggplot(aes(PC1, PC2)) +
+  geom_point(aes(text = paste("Year:", year)),
+             alpha = 0.7) +
   facet_wrap(~mon) +
   annotate("segment", x = -5, xend = 55, y = 0, yend = 0, colour = "midnightblue", linetype=2) +
   annotate("segment", x = 0, xend = 0, y = -25, yend = 25, colour = "midnightblue", linetype=2) +
+  labs(x = "PC1 Score",
+       y = "PC2 Score") +
   ggtitle("PCA decomposition into PC1 Score and PC2 Score by Month",
           subtitle = "Shows seasonal cycle: Parabolic Movement from Jan to Dec") 
 
-ggplotly(pca_by_month_plot)
+ggplotly(pca_by_month_plot, tooltip = "text")
 ```
 
 
@@ -243,7 +254,9 @@ df %>%
   facet_wrap(~year) +
   annotate("segment", x = -5, xend = 55, y = 0, yend = 0, colour = "midnightblue", linetype=2) +
   annotate("segment", x = 0, xend = 0, y = -25, yend = 25, colour = "midnightblue", linetype=2) +
-   ggtitle("PCA decomposition into PC1 Score and PC2 Score by Year",
+  labs(x = "PC1 Score",
+       y = "PC2 Score") +
+  ggtitle("PCA decomposition into PC1 Score and PC2 Score by Year",
           subtitle = "Shows seasonal cycle, missing summer months for 2021") 
 ```
 
@@ -251,15 +264,18 @@ df %>%
 #### Interactive
 ```{r}
 pca_by_year_plot <- df %>%
-  ggplot(aes(PC1, PC2, label = mon)) +
-  geom_point(alpha = 0.8) +
+  ggplot(aes(PC1, PC2)) +
+  geom_point(aes(text = paste(mon)),
+                 alpha = 0.8) +
   facet_wrap(~year) +
   annotate("segment", x = -5, xend = 55, y = 0, yend = 0, colour = "midnightblue", linetype=2) +
   annotate("segment", x = 0, xend = 0, y = -25, yend = 25, colour = "midnightblue", linetype=2) +
-   ggtitle("PCA decomposition into PC1 Score and PC2 Score by Year",
+  labs(x = "PC1 Score",
+       y = "PC2 Score") +
+  ggtitle("PCA decomposition into PC1 Score and PC2 Score by Year",
           subtitle = "Shows seasonal cycle, missing summer months for 2021") 
 
-ggplotly(pca_by_year_plot)
+ggplotly(pca_by_year_plot, tooltip = "text")
 ```
 
 
@@ -271,7 +287,6 @@ ggplotly(pca_by_year_plot)
 
 ### Vector to Raster (img.list)
 ```{r}
-# TODO: proj.name=NULL from imageryML R package
 img.list <- imgVectortoRaster(eigenimages, datalist)$list
 ```
 
@@ -296,11 +311,13 @@ tm_shape(p_stack) +
 ```
 
 
+### Reconstruction of Images with PCA 
+
+
 ```{r}
 # First PC
 ncomp1 <- 1
-# alpha[,1:ncomp1, drop=FALSE] means select the first ncomp1 column (Principal Component)
-RE1 <- alpha[,1:ncomp1, drop=FALSE] %*% eigenimages[1:ncomp1, drop=FALSE]
+RE1 <- alpha[,1:ncomp1, drop=FALSE] %*% eigenimages[1:ncomp1,, drop=FALSE]
 
 # First 2 PCs
 ncomp2 <- 2
@@ -312,7 +329,6 @@ RE3 <- alpha[,1:ncomp3] %*% eigenimages[1:ncomp3,]
 ```
 
 
-### Reconstruction of Images with PCA 
 
 2015-10-01
 ```{r}
@@ -347,6 +363,70 @@ tm_shape(img1) +
 
 
 
+2021-05-01
+```{r}
+# Index for date 2020-06-01
+i <- which(rownames(image_norm) =="2021-05-01")
+
+img1 <- imgVectortoRaster(rbind(image_norm[i,], RE1[i,], RE2[i,], RE3[i,]), datalist)$stack
+
+tm_shape(img1) + 
+  tm_raster(style= "cont", title="SST Anomaly", 
+            palette=pal, midpoint=NA, 
+            colorNA = "grey", textNA = "Land") +
+  tm_layout(panel.labels = c("True", paste(c(ncomp1, ncomp2, ncomp3),"PC")),
+            title=rownames(image_norm)[i])
+```
+
+
+
+
+2021-06-01
+```{r}
+# Index for date 2020-06-01
+i <- which(rownames(image_norm) =="2021-06-01")
+
+img1 <- imgVectortoRaster(rbind(image_norm[i,], RE1[i,], RE2[i,], RE3[i,]), datalist)$stack
+
+tm_shape(img1) + 
+  tm_raster(style= "cont", title="SST Anomaly", 
+            palette=pal, midpoint=NA, 
+            colorNA = "grey", textNA = "Land") +
+  tm_layout(panel.labels = c("True", paste(c(ncomp1, ncomp2, ncomp3),"PC")),
+            title=rownames(image_norm)[i])
+```
+
+
+### Function for Reconstruction of Images with PCA 
+```{r}
+recon_image <- function(date) {
+  
+  # Index for date
+  i <- which(rownames(image_norm) == date)
+  
+  img1 <- imgVectortoRaster(rbind(image_norm[i,], RE1[i,], RE2[i,], RE3[i,]), datalist)$stack
+  
+  tm_shape(img1) + 
+    tm_raster(style= "cont", title="SST Anomaly", 
+              palette=pal, midpoint=NA, 
+              colorNA = "grey", textNA = "Land") +
+    tm_layout(panel.labels = c("True", paste(c(ncomp1, ncomp2, ncomp3),"PC")),
+              title=rownames(image_norm)[i])
+}
+```
+
+
+
+### Variance Explained 
+
+```{r}
+fviz_eig(prcomp_pca) + 
+  xlab("Principal Components") + 
+  ggtitle("")
+```
+
+
+
 ## K-Means Clustering
 
 Resource: https://uc-r.github.io/kmeans_clustering
@@ -373,7 +453,7 @@ img_norm_list <- img_norm$list
 
 ```{r}
 # Have a look at centroids
-round(centroidimages_norm[1:3, 1:10], digits=2)
+round(centroidimages_norm[1:12, 1:10], digits=2)
 ```
 
 
@@ -490,3 +570,314 @@ tm_shape(img_norm_stack) +
   tm_layout(panel.labels = paste("Centroid", 1:length(p_stack))) +
   tm_layout(main.title = "Centroid Images", title.size = 1)
 ```
+
+
+### Distances between the images
+
+Distance based on Euclidian distance. 
+
+```{r warning=FALSE}
+p12 <- kheatmap(12, image_norm, datalist, plotit=FALSE, main.n = 5, dend.type="original")
+```
+
+### Seasonal heatmap
+
+```{r}
+p12$heatmap
+```
+
+
+
+## Hierarichal Clustering
+
+
+### Complete
+```{r}
+d <- dist(image_norm, method = "euclidian")
+clus <- hclust(d, method = "complete")
+
+dend <- as.dendrogram(clus)
+nodePar <- list(lab.cex = 0.6, pch = c(NA, 19), 
+                cex = 0.2, col = "blue")
+
+dend %>%
+  set("labels_col", value = c("skyblue", "orange", "grey","red", "black"), k=5) %>%
+  set("branches_k_color", value = c("skyblue", "orange", "grey", "red", "black"), k = 5) %>%
+  plot(horiz=TRUE, axes=FALSE, ylab = "", xlab="Distance", 
+     nodePar = nodePar, leaflab = "none", main="method='complete'")
+```
+
+
+### Ward D2
+```{r}
+clus <- hclust(d, method="ward.D2")
+dend <- as.dendrogram(clus)
+
+dend %>%
+  set("labels_col", value = c("skyblue", "orange", "grey","red", "black"), k=3) %>%
+  set("branches_k_color", value = c("skyblue", "orange", "grey", "red", "black"), k = 3) %>%
+  plot(horiz=TRUE, axes=FALSE, ylab = "", xlab="Distance", 
+     nodePar = nodePar, leaflab = "none", main="method='ward.D2'")
+```
+
+
+
+## Daily SST
+
+### Data Preprocessing: Daily
+```{r}
+# Processed data
+df_processed_daily <- df_raw %>% 
+  # Get rid of miscellaneous zlev in first row
+  slice(-1) %>% 
+  # zlev is a column of zeroes, so get rid of that
+  dplyr::select(-zlev) %>% 
+  # Convert into date
+  mutate(time = ymd_hms(time),
+         # Extract out day so I can just filter for first day in each month
+         day = day(time)) %>% 
+  dplyr::select(-day) %>% 
+  # Set column names
+  rename(date = time,
+         lat = latitude,
+         lon = longitude) %>% 
+  # Convert date column to Date type
+  mutate(date = as.Date(date),
+         lat = as.numeric(lat),
+         lon = as.numeric(lon),
+         sst = as.numeric(sst))
+
+# mask out Puget Sound, Strait of Juan de Fuca and Georgia Strait
+masks <- list(c(235.4488, 236.884, 47.87651, 50.13138),
+              c(232.2913, 233.8987, 50.28689, 51.60871),
+              c(234.4154, 235.9654, 49.04283, 50.09251))
+
+for(m1 in masks) {
+  # index of Puget Sound, Strait of Juan de Fuca or Georgia Strait
+  mask_loc <- df_processed_daily$lat <= m1[4] & df_processed_daily$lat >= m1[3] &
+    df_processed_daily$lon <= m1[2] & df_processed_daily$lon >= m1[1]
+  # Change to NA
+  df_processed_daily$sst[mask_loc] <- NA
+}
+
+# Check if same n for each date
+n.by.date <- tapply(df_processed_daily$sst, df_processed_daily$date, function(x){sum(is.na(x))})
+if(any((n.by.date-n.by.date[1])!=0)) {
+  stop("There's a problem. Should be same n for each date.")
+} 
+
+# Pivot Wider
+df_wide_daily <- df_processed_daily %>% 
+  pivot_wider(names_from = date, values_from = sst)
+
+# which row are non-NA?
+pos.loc <- which(!is.na(df_wide_daily[,3]))
+
+# Omit data and take transpose
+df.clean.daily <- df_wide_daily %>% 
+  # remove the rows that are NA
+  na.omit()
+
+# Take transpose of df_wide and df.clean to mimic output of processCSV-tidyverse.R
+df_wide_t <- t(df_wide_daily)
+df.clean.t <- t(df.clean.daily)
+
+datalist <- list(dat = df_wide_t, dat.clean = df.clean.t, pos.loc = pos.loc)
+
+# Take out rows with lat, lon
+image_daily <- df.clean.t[c(-1,-2),]
+# image %>% View()
+
+# Create image_norm (X_norm in QuanSeminar.Rmd)
+image_daily_norm <- t(scale(t(image_daily), scale=FALSE))
+colnames(image_daily_norm) <- paste0("p", 1:ncol(image_daily_norm))
+
+dates <- as.Date(rownames(image_daily_norm))
+years <- as.numeric(format(dates, "%Y"))
+mons <- format(dates, "%B")
+```
+
+`image_daily_norm` is a matrix 4169 by 776 where 4169 are the number of daily images, 776 is the number of pixels.
+
+### Aug 1st Images (Normalized)
+```{r}
+# Index of Aug 1st
+loc <- which(rownames(image_daily_norm) %in% paste0(2010:2020,"-08-01"))
+# Raster img
+img1 <- imgVectortoRaster(image_daily_norm[loc,], datalist)$stack
+
+tm_shape(img1) + 
+  tm_raster(style= "cont", title="SST Anomaly", 
+            palette=pal, midpoint=NA, 
+            colorNA = "grey", textNA = "Land") +
+  tm_layout(panel.labels = rownames(image_daily_norm)[loc]) +
+  ggtitle("August 1 images")
+```
+
+
+
+## Jun-Sep # of days with upwelling signal
+
+* PCA on the full data set: daily Jan 1982 to Dec 2020
+* Use the first 20 Principal Components to decribe the images
+* Look at June to Sept months only
+* Divide Jul-Sep images using hierarchical Clustering with `method="complete"` into 3 groups.
+* Number of days that are in each cluster
+
+```{r}
+# Run PCA
+prcomp.pca <- prcomp(image_daily_norm, scale = FALSE, center=FALSE)
+eigenimages <- t(prcomp.pca$rotation)
+alpha <- prcomp.pca$x
+```
+
+```{r}
+ncomp <- 20
+monvals <- month.name[6:9]
+
+for(meth in c("hclust.complete")) {
+  
+  p1 <- yearTable(alpha[mons%in%monvals,1:ncomp], 
+                  method=meth, K=3, 
+                  dist.type="euclidian")
+  
+  p <- p1$p +
+    geom_smooth(span = 0.3)+
+    labs(x = NULL, 
+         y = NULL) +
+    ggtitle(paste0("Number of days in each pattern in June-Sept (", meth, ")"))
+  
+  centers <- p1$centers %*% eigenimages[1:ncomp,, drop=FALSE]
+  img.list <- imgVectortoRaster(centers, datalist)$list
+  
+  addIMGtopanel(p, img.list)
+}
+```
+
+
+#### Pattern Relative to Oil Sardine Collapse
+
+```{r}
+d2 = data.frame(x = c(2015,2018,2018,2015,2015),
+                y = c(1,1,Inf, Inf, 1))
+
+# Add Oil Sardine Collapse
+p <- p1$p + 
+  geom_smooth(span = 0.3)+
+  ggtitle(paste0("Number of days in each pattern in June-Sept (", meth, ")"),
+          subtitle = "Relative to Oil Sardine Collapse") +
+  geom_polygon(data=d2, aes(x=x, y=y), fill="red", alpha=0.2)
+
+addIMGtopanel(p, img.list)
+```
+
+
+
+### Jun-Sep day of first and last strong upwelling signal
+
+```{r}
+# Get index of years that correspond to Jun-Sept
+grp_yrs <- years[mons %in% monvals]
+# Get Jun-Sept dates
+grp_date <- format(as.Date(rownames(image_daily)[mons%in%monvals]), "%b-%d")
+
+# ??? I'm guessing x == 3 corresponds to the 3rd cluster, which is the strong upwelling pattern.
+first_day <- tapply(p1$clusters, 
+                    grp_yrs,
+                    function(x){min(which(x == 3))}
+                    )
+last_day <- tapply(p1$clusters,
+                   grp_yrs,
+                   function(x){max(which(x == 3))})
+
+df <- data.frame(year=as.numeric(names(first_day)), 
+                 first_day=first_day, 
+                 last_day=last_day, 
+                 first_day2=grp_date[first_day],
+                 last_day2=grp_date[last_day])
+
+df2 <- df[,1:3] %>% 
+  pivot_longer(cols = 2:3, names_to="upwelling", values_to="day")
+
+df2 %>% 
+  filter(year < 2020) %>% 
+  ggplot(aes(x=year, y=day, col=upwelling)) + 
+  geom_line() + 
+  # geom_smooth(method="lm") +
+  scale_x_continuous(breaks = seq(2010, 2019, 2)) +
+  scale_y_continuous(breaks=seq(0,125,10),
+                     labels=c("", grp_date[1:122][seq(0,125,10)]))+
+  labs(x = NULL,
+       y = NULL) +
+  ggtitle("First and last day of strong upwelling pattern")
+```
+
+
+
+## Upwelling Index
+```{r}
+up_index <- read_csv("./howard-analysis/upwelling_index.csv") %>% 
+   mutate(year = year(time),
+         month = month(time),
+         hour = hour(time))
+```
+
+```{r}
+up_index %>% 
+  ggplot(aes(time, upwelling_index)) +
+  geom_line(color = "midnightblue") +
+  geom_smooth(color = "red") +
+  labs(x = NULL,
+       y = "Upwelling Index",
+       title = "Upwelling Index, 51N 131W, 6-hourly",
+       subtitle = "2016-06-29 to 2021-06-29")
+```
+
+
+### By Year
+
+```{r}
+up_index %>% 
+  ggplot(aes(time, upwelling_index)) +
+  geom_line(color = "midnightblue") +
+  geom_smooth(color = "red") +
+  facet_wrap(~year, scales = "free_x") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  labs(x = NULL,
+       y = "Upwelling Index",
+       title = "Upwelling Index, 51N 131W, 6-hourly, by Year",
+       subtitle = "2016-06-29 to 2021-06-29")
+```
+
+### By Month
+```{r}
+up_index %>% 
+  ggplot(aes(time, upwelling_index)) +
+  geom_line(color = "midnightblue", aes(group = 1)) +
+  facet_wrap(~month) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  labs(x = NULL,
+       y = "Upwelling Index",
+       title = "Upwelling Index, 51N 131W, 6-hourly, by Month",
+       subtitle = "2016-06-29 to 2021-06-29")
+```
+
+
+### By Hour
+```{r}
+up_index %>% 
+  mutate(hour = case_when(
+    hour == 0 ~ "00:00",
+    hour == 6 ~ "06:00",
+    hour == 12 ~ "12:00",
+    hour == 18 ~ "18:00"
+  )) %>% 
+  ggplot(aes(time, upwelling_index)) +
+  geom_line(color = "midnightblue") +
+  facet_wrap(~hour) +
+  labs(x = NULL,
+       y = "Upwelling Index",
+       title = "Upwelling Index, 51N 131W, 6-hourly, by Hour",
+       subtitle = "2016-06-29 to 2021-06-29")
+```
+
